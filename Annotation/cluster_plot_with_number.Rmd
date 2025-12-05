@@ -1,0 +1,78 @@
+---
+title: "Untitled"
+output: html_document
+date: "2025-07-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+library(dplyr)
+library(ggrepel)
+
+generate_spatial_plots_fx <- function(spe, cnames, color_vector_nsp, color_vector_bank) {
+  
+  # 构建包含 cluster 编号 + 空间坐标的数据框
+  df <- as.data.frame(colData(spe))
+  df$x <- spe$x_centroid
+  df$y <- spe$y_centroid
+  
+  # cluster 1：non-spatial cluster 中心
+  centers_nsp <- df %>%
+    group_by(cluster = .data[[cnames[1]]]) %>%
+    summarise(x = median(x), y = median(y), .groups = "drop")
+  
+  # cluster 2：BANKSY cluster 中心
+  centers_bank <- df %>%
+    group_by(cluster = .data[[cnames[2]]]) %>%
+    summarise(x = median(x), y = median(y), .groups = "drop")
+  
+  # 非空间聚类图
+  plot_nsp <- plotColData(spe, x = "x_centroid", y = "y_centroid",
+                          point_size = 0.6, colour_by = cnames[1]) +
+    scale_color_manual(values = color_vector_nsp) +
+    geom_text_repel(data = centers_nsp,
+                    aes(x = x, y = y, label = cluster),
+                    size = 3, inherit.aes = FALSE) +
+    labs(title = paste0("Non-spatial clusters \n", cell_type_anno, " cells"))
+  
+  # BANKSY 聚类图
+  plot_bank <- plotColData(spe, x = "x_centroid", y = "y_centroid",
+                           point_size = 0.6, colour_by = cnames[2]) +
+    scale_color_manual(values = color_vector_bank) +
+    geom_text_repel(data = centers_bank,
+                    aes(x = x, y = y, label = cluster),
+                    size = 3, inherit.aes = FALSE) +
+    labs(title = paste0("BANKSY clusters \n", cell_type_anno, " cells"))
+  
+  return(list(plot_nsp = plot_nsp, plot_bank = plot_bank))
+}
+
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+# 假设 cnames_spe 是你前面提到的
+p <- generate_spatial_plots_fx(spe_subsets[[3]], cnames_spe, color_vector_nsp, color_vector_bank)
+
+# 查看非空间聚类图
+print(p$plot_nsp)
+
+# 查看 BANKSY 聚类图
+print(p$plot_bank)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

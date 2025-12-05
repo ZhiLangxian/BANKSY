@@ -1,0 +1,720 @@
+---
+title: "Annotation plots for cISH data (BANKSY)"
+author: "Alex Matei"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    df_print: paged
+    code_folding: hide
+  pdf_document:
+    toc: true
+    toc_depth: '4'
+---
+
+# Setup
+```{r setup, include=FALSE}
+if (!requireNamespace("here", quietly = TRUE)) {
+  install.packages("here")
+}
+library(here)
+source(here("config.R"))
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, root.dir = here::here())
+```
+
+```{r timestamp}
+ts <- format(Sys.time(), "%Y%m%d%H%M%S")
+ptm <- proc.time()
+
+cat("This document was created with the time stamp",ts)
+```
+
+# User-specified variables for loading the spe - **USER INPUTS REQUIRED** 
+
+```{r user_var_load_spe}
+# Path to the directory containing the input 'spe' files
+data_dir <- here('/Users/langxianzhi/Calcinosis/Resegmentation/output/')  # Specify the data directory
+
+# Name of the input 'spe' file to load
+input_spe_filename <- "annotation_level1_reso1.5.rds"  # Specify the 'spe' file name
+
+# Explanations:
+# - **data_dir**: The directory where your input 'spe' files are located.
+# - **input_spe_filename**: The name of the 'spe' file to load.
+```
+# Load the spe
+
+```{r load spe}
+# Load the 'spe' object
+if (grepl("\\.rds$", input_spe_filename)) {
+  spe <- readRDS(file.path(data_dir, input_spe_filename))
+} else if (grepl("\\.RData$", input_spe_filename)) {
+  load(file.path(data_dir, input_spe_filename))
+}
+
+```
+
+# Other user-specified variables - **USER INPUTS REQUIRED** 
+
+```{r user_var_other, include=TRUE}
+# Path to the directory where the spe will be saved
+output_dir <- here('/Users/langxianzhi/Calcinosis/Resegmentation/output/')  # Specify the output directory
+
+# Name of the ROI variable in the columns of 'spe' (usually: "sample_id")
+cat(" Choose the ROI variable from:\n")
+cat(colnames(colData(spe)), sep = "\n")
+roi_variable <- "SampleId"  # Specify the roi variable in 'spe'
+
+# Name of the disease variable in the columns of 'spe' (usually: "disease")
+disease_variable <- "Group"  # Specify the disease variable in 'spe'
+
+# Name of the donor variable in the columns of 'spe' (usually: "donor")
+donor_variable <- "SampleId"  # Specify the donor variable in 'spe'
+
+# Should the spe be subset? Do this only if you want to do subclustering
+subset_flag <- FALSE  # Set to TRUE to subset the spe or FALSE to not subset it
+
+# Variable to subset the spe by, if needed
+if (subset_flag) {
+  subset_variable <- "lv2.anno_bank"  # Specify the column in 'spe' to subset by
+  cat(" Choose the cell type variable from:\n")
+  cat(unique(spe[[subset_variable]]), sep = "\n")
+  value_to_exclude <- c("Keratinocytes","Melanocytes","Immune cells" ,"Appendage-associated cells", "Undefined","Schwann cells","Adipocytes","Endothelial cells","Smooth muscle cells" )  # Specify the value to exclude when subsetting the 'spe'
+}
+
+# Level of annotation and repeat number
+level_anno <- c("1") # Specify the level of annotation for the clusters.
+repeat_anno <- c("1") # Specify the repeat number for the annotation at the current level, if you do the annotation at the same level multiple times
+name_level_repeat <- paste0("BANKSY_params_level_", level_anno, "_repeat_", repeat_anno) # leave unchanged
+
+# Flag if you did manual annotation for the current level and repeat
+manual_annotation_flag <- TRUE # Specify if you did manual annotation for the current level and repeat
+
+if (manual_annotation_flag) {
+  manual_annotation_value <- "lv1.anno_bank" # Specify the column name in 'spe' that contains the manual annotation
+}
+
+# Cell types that are aimed to annotate
+cell_type_anno <- c("all") # Specify the cell types that are aimed to annotate
+
+# Assay used for plotting 
+cat("\n Choose the assay variable from:\n")
+cat(paste(names(assays(spe)), collapse = "\n"))
+
+#cat(names(assays(spe), sep = "\n"))
+assay_selected <- "logcounts"
+
+# Parameters to filter the marker genes by
+avg_log2FC_threshold <- 1  # Specify the average log2 fold change threshold
+p_val_threshold <- 0.05  # Specify the p-value threshold
+pct_1_threshold <- 0.2 # Specify the minimum percentage of cells expressing the gene
+
+# Explanations:
+# - **output_dir**: The directory where the modified 'spe' files will be saved.
+# - **roi_variable**: The column name in 'spe' that contains roi information.
+# - **disease_variable**: The column name in 'spe' that contains disease information.
+# - **donor_variable**: The column name in 'spe' that contains donor information.
+# - **subset_flag**: A flag to determine whether to subset the 'spe'.
+# - **subset_variable**: The column name in 'spe' to subset by.
+# - **value_to_exclude**: The value to exclude when subsetting the 'spe'.
+# - **level_anno**: The level of annotation for the clusters.
+# - **repeat_anno**: The repeat number for the annotation at the current level.
+# - **manual_annotation_flag**: Flag that indicates whether you are working directly with the clusters obtained from BANKSY for the current level and repeat (FALSE) or whether you did before a manual annotation of the BANKSY clusters and are plotting the results compared to non-spatial clusters (TRUE)
+# - **manual_annotation_value**: The column name in 'spe' that contains the manual annotation.
+# - **cell_type_anno**: The cell types that are aimed to annotate. Examples: "all", "immune", "non-immune", "endothelial", "epithelial", "fibroblast", "neural", "muscle", "stem", "progenitor", "other".
+# - **matrix_used**: The matrix used for the function find_markers_banksy_custom_fx. Choose from "scalenormcounts", "banksy", "scalenormcounts_smooth", "banksy_smooth". Defaults to "scalenormcounts".
+# - **ident_banksy**: A flag to determine whether to choose the BANKSY clusters or the non-spatial clusters for the marker genes.
+# - **avg_log2FC_threshold**: The average log2 fold change threshold for filtering marker genes.
+# - **p_val_threshold**: The p-value threshold for filtering marker genes.
+# - **pct_1_threshold**: The minimum percentage of cells expressing the gene
+```
+
+
+# Prepare spe and colors for plots 
+```{r prep plots}
+
+if (subset_flag) {
+  spe <- spe[,!spe[[subset_variable]] %in% value_to_exclude ]
+} else {
+  spe <- spe
+}
+
+colData(spe) <- cbind(colData(spe), spatialCoords(spe))
+
+cnames_spe <- metadata(spe)[[name_level_repeat]]$cnames
+rdnames_spe <- metadata(spe)[[name_level_repeat]]$rdnames
+# asnames_spe <- names(metadata(spe)[[name_level_repeat]][["assays"]])
+
+# asnames_spe_not_in_assays <- setdiff(asnames_spe, names(assays(spe)))
+
+for(i in cnames_spe){
+  annotation_vector <- metadata(spe)[[name_level_repeat]][["annotation"]][[i]]
+  spe[[i]] <- annotation_vector[colnames(spe)]
+}
+ 
+# reduceddims_list <- list()
+# for(i in rdnames_spe){
+#  reduceddims_list[[i]] <- metadata(spe)[[name_level_repeat]][["reducedDims"]][[i]]
+#  reducedDims(spe)[[i]] <- reduceddims_list[[i]][colnames(spe),]
+# }
+ 
+# assays_list <- list()
+# for (i in asnames_spe_not_in_assays) {
+#  assays_list[[i]] <- metadata(spe)[[name_level_repeat]][["assays"]][[i]]
+#  assays(spe)[[i]] <- assays_list[[i]][,colnames(spe)]
+# }
+
+if(manual_annotation_flag){
+  spe[["anno_bank"]] <- spe[[manual_annotation_value]]
+  cnames_spe_alt <- c(cnames_spe[1], "anno_bank")
+} else {
+  spe[["anno_bank"]] <- spe[[cnames_spe[2]]]
+}
+
+# Create color_vector_nsp
+color_vector_nsp <- setNames(colorRampPalette(brewer.pal(8, "Paired"))(length(unique(spe[[cnames_spe[1]]]))), 
+                             sort(as.numeric(unique(spe[[cnames_spe[1]]]))))
+
+# Create color_vector_bank with the same number of unique values as in cnames[2]
+unique_values_bank <- unique(spe[["anno_bank"]])
+color_vector_bank_full <- colorRampPalette(brewer.pal(8, "Paired"))(length(unique_values_bank))
+color_vector_bank <- setNames(color_vector_bank_full, unique_values_bank)
+
+# Ensure the first colors in color_vector_bank are the same colors as in color_vector_nsp
+for (i in 1:length(unique(spe[[cnames_spe[1]]]))) {
+  if (i %in% names(color_vector_bank)) {
+    color_vector_bank[as.character(i)] <- color_vector_nsp[as.character(i)]
+  }
+}
+
+color_vector_bank2 <- setNames(colorRampPalette(brewer.pal(8, "Paired"))(length(unique(spe[[cnames_spe[2]]]))), sort(as.numeric(unique(spe[[cnames_spe[2]]]))))
+
+# Replace duplicates in color_vector_bank
+color_vector_bank <- replace_duplicate_colors_fx(color_vector_bank)
+
+spe[["anno_bank"]] <- factor(spe[["anno_bank"]], levels=unique(spe$anno_bank))
+
+```
+
+# Create spatial plots
+
+```{r create spatial plots}
+
+# Plot BANKSY results - clusters plotted spatially
+
+unique_sample_ids <- unique(spe[[roi_variable]])
+# Create a list to store subsets
+spe_subsets <- list()
+# Subset the SpatialExperiment object by each unique sample_id
+for (SampleId in unique_sample_ids) {
+  spe_subsets[[SampleId]] <- spe[, spe$SampleId == SampleId]
+}
+
+# Generate plots for each subset and store them in a list
+
+generate_spatial_plots_fx <- function(spe, cnames, color_vector_nsp, color_vector_bank) {
+  plot_nsp <- plotColData(spe, x = "x_centroid", y = "y_centroid", point_size = 0.6, colour_by = cnames[1]) +
+    scale_color_manual(values = color_vector_nsp) +
+    labs(title = paste0("Non-spatial clusters \n", cell_type_anno, " cells"))
+  
+  plot_bank <- plotColData(spe, x = "x_centroid", y = "y_centroid", point_size = 0.6, colour_by = cnames[2]) +
+    scale_color_manual(values = color_vector_bank) +
+    labs(title = paste0("BANKSY clusters \n", cell_type_anno, " cells"))
+  
+  return(list(plot_nsp = plot_nsp, plot_bank = plot_bank))
+}
+
+
+if(manual_annotation_flag){
+plot_list <- lapply(spe_subsets, generate_spatial_plots_fx, cnames = cnames_spe_alt, color_vector_nsp = color_vector_nsp, color_vector_bank = color_vector_bank)
+} else {
+plot_list <- lapply(spe_subsets, generate_spatial_plots_fx, cnames = cnames_spe, color_vector_nsp = color_vector_nsp, color_vector_bank = color_vector_bank)
+}
+
+# Create a list to store combined plots for each sample
+combined_plot_list <- list()
+combined_plot_list2 <- list()
+combined_plot_list3 <- list()
+
+# Combine the plots for each sample
+for (i in names(plot_list)) {
+  combined_plot_list[[i]] <- cowplot::plot_grid(plot_list[[i]]$plot_nsp + coord_equal(),
+                                                plot_list[[i]]$plot_bank + coord_equal(),
+                                                ncol = 2)
+  combined_plot_list2[[i]] <- cowplot::plot_grid(
+  plot_list[[i]]$plot_nsp + facet_wrap( ~ colour_by),
+  plot_list[[i]]$plot_bank + facet_wrap( ~ colour_by),
+  ncol = 2)
+  #combined_plot_list2[[i]] <- cowplot::plot_grid(
+   # plot_list[[i]]$plot_nsp,
+    #plot_list[[i]]$plot_bank,
+    #ncol = 2)
+}
+combined_plot_list3 <- list(combined_plot_list,combined_plot_list2)
+names(combined_plot_list3) <- c("Plot_type1", "Plot_type2")
+
+```
+
+# Plot BANKSY results spatially {.tabset .tabset-pills}
+
+`r fig_dim <- c(8, 4)`
+
+```{r plot BANKSY spatial, fig.dim=fig_dim, results='asis'} 
+
+for (i in names(combined_plot_list3)) {
+  # Create a new tabset for each plot type
+  cat("## ", i, " {.tabset .tabset-pills}\n\n")
+  
+  # Iterate over each sample within the plot type
+  for (j in names(combined_plot_list3[[i]])) {
+    cat("### ", j, "\n\n")
+    
+    # Print the plot
+    knitr::knit_print(combined_plot_list3[[i]][[j]])
+    
+    # Add extra newlines to ensure proper separation
+    cat("\n\n")
+  }
+}
+```
+
+# Plot BANKSY results as UMAP 
+```{r plot BANKSY UMAP, fig.width=15, fig.height=7}
+
+# Plot BANKSY results - clusters plotted in UMAP space - all cells
+
+umap_nsp <- plotReducedDim(
+  spe,
+  dimred = grep("UMAP.*lam0$", rdnames_spe, value = TRUE),
+  text_size = 4,
+  colour_by = cnames_spe[1],
+  text_by = cnames_spe[1]
+) + #scale_color_manual(values = color_vector_nsp) +
+  labs(title = paste0("UMAP - non-spatial clustering \n", cell_type_anno, " cells"))
+
+umap_bank <- plotReducedDim(
+  spe,
+  dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+  text_size = 4,
+  colour_by = cnames_spe[2],
+  text_by = cnames_spe[2]
+) + #scale_color_manual(values = color_vector_bank) +
+  labs(title = paste0("UMAP - BANKSY clustering \n", cell_type_anno, " cells"))
+
+if (manual_annotation_flag) {
+  umap_bank_anno <- plotReducedDim(
+    spe,
+    dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+    text_size = 4,
+    colour_by = cnames_spe_alt[2],
+    text_by = cnames_spe_alt[2]
+  ) + #scale_color_manual(values = color_vector_bank) +
+    labs(title = paste0("UMAP - BANKSY clustering \n", cell_type_anno, " cells"))
+  cowplot::plot_grid(umap_nsp, umap_bank_anno, ncol = 2)
+} else {
+  cowplot::plot_grid(umap_nsp, umap_bank, ncol = 2)
+}
+
+#umap_bank3 <- plotReducedDim(
+ # spe,
+  #dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+  #text_size = 4,
+  #colour_by = cnames_spe[2],
+  #text_by = "anno_bank"
+#) + #scale_color_manual(values = color_vector_bank2) +
+ # labs(
+  #  title = paste0(
+   #   "UMAP - BANKSY clustering - CD45 protein expression \n asinh transformed and quantile rescaled per sample \n",
+    # cell_type_anno,
+     # " cells"
+    #)
+ # )
+#print(umap_bank3)
+
+if (manual_annotation_flag) {
+  umap_bank1 <- plotReducedDim(
+    spe,
+    dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+    text_size = 4,
+    colour_by = cnames_spe_alt[2],
+    text_by = cnames_spe_alt[2]
+  ) + #scale_color_manual(values = color_vector_bank) +
+    labs(title = paste0("UMAP - BANKSY clustering \n", cell_type_anno, " cells")) +
+    geom_text_repel(label = cnames_spe_alt[2])
+  umap_bank2 <- plotReducedDim(
+    spe,
+    dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+    colour_by = cnames_spe[2],
+    text_by = cnames_spe[2]
+  ) + #scale_color_manual(values = color_vector_bank2) +
+    labs(title = paste0("UMAP - BANKSY clustering \n", cell_type_anno, " cells"))
+  
+  cowplot::plot_grid(umap_bank1, umap_bank2, ncol = 2)
+}
+
+# Apply rescalequantiles to each subset
+#quant_res <- lapply(spe_subsets, function(spe) {
+ ##spe$Mean.CD68_quantresc <- rescale_quantiles_asinh_fx(spe$Mean.CD68)
+  #spe$Mean.PanCK_quantresc <- rescale_quantiles_asinh_fx(spe$Mean.PanCK)
+  #return(spe)
+#})
+
+# Merge the results
+#spe_merged <- do.call(cbind, quant_res)
+#spe_merged$Mean.CD68_quantresc_wholedataset <- rescale_quantiles_asinh_fx(spe_merged$Mean.CD68)
+#spe_merged$Mean.CD45_quantresc_wholedataset <- rescale_quantiles_asinh_fx(spe_merged$Mean.CD45)
+#spe_merged$Mean.PanCK_quantresc_wholedataset <- rescale_quantiles_asinh_fx(spe_merged$Mean.PanCK)
+
+# Verify the dimensions of the merged object
+#cat("Are the dimensions of the original spe identical to those of the merged spe after applying BANKSY for each sample for stromal?: ",identical(dim(spe_from_seurat_CosMx),dim(spe_merged)))
+
+#match_id_spe <- match(colnames(spe), colnames(spe_merged))
+#prot.markers <- c("Mean.CD45_quantresc",
+                 # "Mean.CD68_quantresc",
+                  #"Mean.PanCK_quantresc")
+
+
+
+#for (i in prot.markers) {
+  #spe[[i]] <- spe_merged[[i]][match_id_spe]
+#}
+
+#umap_bank3 <- plotReducedDim(
+ # spe,
+  #dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+  #text_size = 4,
+  #colour_by = "Mean.CD45_quantresc",
+  #text_by = "anno_bank"
+#) + #scale_color_manual(values = color_vector_bank2) +
+ # labs(
+  #  title = paste0(
+   #   "UMAP - BANKSY clustering - CD45 protein expression \n asinh transformed and quantile rescaled per sample \n",
+    #  cell_type_anno,
+      " cells"
+   # )
+  #)
+#umap_bank4 <- plotReducedDim(
+ # spe,
+  #dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+  #colour_by = "Mean.CD45_quantresc",
+  #text_by = "anno_bank"
+#) + #scale_color_manual(values = color_vector_bank2) +
+ # labs(
+  #  title = paste0(
+   #   "UMAP - BANKSY clustering - CD45 protein expression \n asinh transformed and quantile rescaled per sample \n",
+    #  cell_type_anno,
+     # " cells"
+    #)
+  #)
+
+#cowplot::plot_grid(umap_bank3, umap_bank4, ncol = 2)
+
+#umap_bank5 <- plotReducedDim(
+ # spe,
+  #dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+  #text_size = 4,
+  #colour_by = "Mean.CD68_quantresc",
+  #text_by = "anno_bank"
+#) + #scale_color_manual(values = color_vector_bank2) +
+ # labs(
+  #  title = paste0(
+   #   "UMAP - BANKSY clustering - CD68 protein expression \n asinh transformed and quantile rescaled per sample \n",
+    #  cell_type_anno,
+     # " cells"
+    #)
+  #)
+#umap_bank6 <- plotReducedDim(
+ # spe,
+  #dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+  #colour_by = "Mean.CD68_quantresc",
+  #text_by = "anno_bank"
+#) + #scale_color_manual(values = color_vector_bank2) +
+ # labs(
+  #  title = paste0(
+   #   "UMAP - BANKSY clustering - CD68 protein expression \n asinh transformed and quantile rescaled per sample \n",
+    #  cell_type_anno,
+     # " cells"
+    #)
+  #)
+
+#cowplot::plot_grid(umap_bank5, umap_bank6, ncol = 2)
+
+#umap_bank7 <- plotReducedDim(
+ # spe,
+  #dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+  #text_size = 4,
+  #colour_by = "Mean.PanCK_quantresc",
+  #text_by = cnames_spe[2]
+#) + #scale_color_manual(values = color_vector_bank2) +
+ # labs(
+  #  title = paste0(
+   #   "UMAP - BANKSY clustering - PanCK protein expression \n asinh transformed and quantile rescaled per sample \n",
+    #  cell_type_anno,
+     # " cells"
+    #)
+  #)
+#umap_bank8 <- plotReducedDim(
+ # spe,
+  #dimred = grep("UMAP.*lam0.2$", rdnames_spe, value = TRUE),
+  #colour_by = "Mean.PanCK_quantresc",
+#  text_by = "anno_bank"
+#) + #scale_color_manual(values = color_vector_bank2) +
+ # labs(
+  #  title = paste0(
+   #   "UMAP - BANKSY clustering - PanCK protein expression \n asinh transformed and quantile rescaled per sample \n",
+    #  cell_type_anno,
+     # " cells"
+    #)
+  #)
+
+#cowplot::plot_grid(umap_bank7, umap_bank8, ncol = 2)
+
+#rm(spe_merged)
+```
+
+# Plot marker genes for new clusters as heatmaps
+
+```{r plot marker genes heatmaps, fig.width=15, fig.height=25}
+###
+# check the cluster without cells
+table(spe[[cnames_spe[2]]])
+
+# remove the cluster without cells
+clusters_to_remove <- c(5, 9, 12)
+
+markers_seurat <- metadata(spe)[[name_level_repeat]]$markers
+# keep the remaining clusters
+markers_seurat_top <- markers_seurat %>%
+    filter(!cluster %in% clusters_to_remove) %>%  # 
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > avg_log2FC_threshold & 
+                  p_val < p_val_threshold & 
+                  pct.1 > pct_1_threshold) %>%
+    slice_head(n = 10)
+
+# extract 
+genes_use <- extract_and_clean_genes_fx(markers_seurat_top, top_n = 10)
+
+##
+#markers_seurat <- metadata(spe)[[name_level_repeat]]$markers
+
+#markers_seurat_top <- markers_seurat %>%
+    #group_by(cluster) %>%
+    #dplyr::filter(avg_log2FC > avg_log2FC_threshold & p_val < p_val_threshold & pct.1 > pct_1_threshold) %>%
+    #slice_head(n =  10)
+
+##genes_use <- extract_and_clean_genes_fx(markers_seurat_top, top_n = 10)
+##
+
+if(manual_annotation_flag){
+celltype_mean_anno_bank <- aggregateAcrossCells(as(spe, "SingleCellExperiment"),
+                                                  ids = spe[[cnames_spe_alt[2]]], 
+                                                  statistics = "mean",
+                                                  use.assay.type = assay_selected,
+                                                  subset.row = unique(genes_use))
+
+
+dittoHeatmap(celltype_mean_anno_bank,
+             assay = assay_selected, 
+             cluster_cols = TRUE, 
+             scale = "none",
+             #scaled.to.max = TRUE,
+             #heatmap.colors.max.scaled = viridis(100),
+             heatmap.colors = viridis(100),
+             show_colnames=TRUE,
+             #gaps_col = c(1:length(unique(spe_from_seurat_CosMx_str$lv2.anno_bank))),
+             main=paste0("BANKSY clustering ", cell_type_anno, " cells", " annotated"),
+             annot.by = c(cnames_spe_alt[2], 
+                          "ncells"))
+
+dittoHeatmap(celltype_mean_anno_bank,
+             assay = assay_selected, 
+             cluster_cols = TRUE, 
+             scale = "none",
+             scaled.to.max = TRUE,
+             heatmap.colors.max.scaled = viridis(100),
+             #heatmap.colors = viridis(100),
+             show_colnames=TRUE,
+             #gaps_col = c(1:length(unique(spe_from_seurat_CosMx_str$lv2.anno_bank))),
+             main=paste0("BANKSY clustering ", cell_type_anno, " cells", " annotated"),
+             annot.by = c(cnames_spe_alt[2], 
+                          "ncells"))
+}
+
+celltype_mean_clust_bank <- aggregateAcrossCells(as(spe, "SingleCellExperiment"),
+                                                  ids = spe[[cnames_spe[2]]], 
+                                                  statistics = "mean",
+                                                  use.assay.type = assay_selected,
+                                                  subset.row = unique(genes_use))
+
+dittoHeatmap(celltype_mean_clust_bank,
+             assay = assay_selected, 
+             cluster_cols = TRUE, 
+             scale = "none",
+             #scaled.to.max = TRUE,
+             #heatmap.colors.max.scaled = viridis(100),
+             heatmap.colors = viridis(100),
+             show_colnames=TRUE,
+             #gaps_col = c(1:length(unique(spe_from_seurat_CosMx_str$lv2.anno_bank))),
+             main=paste0("BANKSY clustering ", cell_type_anno, " cells", " not annotated"),
+             annot.by = c(cnames_spe[2], 
+                          "ncells"))
+
+dittoHeatmap(celltype_mean_clust_bank,
+             assay = assay_selected, 
+             cluster_cols = TRUE, 
+             scale = "none",
+             scaled.to.max = TRUE,
+             heatmap.colors.max.scaled = viridis(100),
+             #heatmap.colors = viridis(100),
+             show_colnames=TRUE,
+             #gaps_col = c(1:length(unique(spe_from_seurat_CosMx_str$lv2.anno_bank))),
+             main=paste0("BANKSY clustering ", cell_type_anno, " cells", " not annotated"),
+             annot.by = c(cnames_spe[2], 
+                          "ncells"))
+
+set.seed(220818)
+cur_cells <- if (ncol(spe) > 5000) {
+  cur_cells <- sample(seq_len(ncol(spe)), 5000)
+} else {
+  cur_cells <- colnames(spe)
+}
+
+#cur_cells <- if (ncol(spe) > 5000) {
+ # colnames(spe)[sample(seq_len(ncol(spe)), 5000)]
+#} else {
+#  colnames(spe)
+#}
+
+
+spe[[cnames_spe[2]]] <- factor(spe[[cnames_spe[2]]], levels=c(1:length(spe[[cnames_spe[2]]])))
+spe[["anno_bank"]] <- factor(spe[["anno_bank"]], levels=unique(spe$anno_bank))
+
+# Create color vectors
+color_vector_anno_bank <- setNames(colorRampPalette(brewer.pal(8, "Set3"))(length(unique(spe$anno_bank))), 
+                             unique(spe$anno_bank))
+
+color_vector_clust_bank <- setNames(colorRampPalette(brewer.pal(8, "Set3"))(length(unique(spe[[cnames_spe[2]]]))), 
+                             sort(as.numeric(unique(spe[[cnames_spe[2]]]))))
+
+
+color_vector_disease <- setNames(colorRampPalette(brewer.pal(8, "Set1"))(length(unique(spe[[disease_variable]]))),
+                                 unique(spe[[disease_variable]]))
+
+color_vector_sample_id <- setNames(colorRampPalette(brewer.pal(8, "Accent"))(length(unique(spe[[donor_variable]]))),
+                                 unique(spe[[donor_variable]]))
+
+
+
+# Count, sort and cumulate cells for the heatmap
+if(manual_annotation_flag){
+cell_counts_anno_bank <- subset_and_count_cells_fx(spe[, cur_cells], "anno_bank")
+unique_anno_bank <- unique(spe$anno_bank)
+sorted_cumulative_anno_bank <- sort_and_cumulate_fx(cell_counts_anno_bank,unique_anno_bank)
+spe$anno_bank <- factor(spe$anno_bank, levels=unique_anno_bank)
+} 
+
+cell_counts_clust_bank <- subset_and_count_cells_fx(spe[, cur_cells], cnames_spe[2])
+unique_clust_bank <- sort(as.numeric(unique(spe[[cnames_spe[2]]])))
+sorted_cumulative_clust_bank <- sort_and_cumulate_fx(cell_counts_clust_bank,unique_clust_bank)
+spe[[cnames_spe[2]]] <- factor(spe[[cnames_spe[2]]], levels=unique_clust_bank)
+
+# Create breaks for the heatmap
+mat_breaks <- seq(min(assays(spe)[[assay_selected]]),
+                  max(assays(spe)[[assay_selected]]),length.out = 100)
+
+if (manual_annotation_flag) {
+# Heatmap visualization - DittoHeatmap
+dittoHeatmap(spe[,cur_cells], 
+             genes = unique(genes_use),
+             assay = assay_selected, 
+             cluster_cols = FALSE, 
+             gaps_col = sorted_cumulative_anno_bank,
+             breaks=mat_breaks,
+             #scale = "none",
+             #scaled.to.max = TRUE,
+             #show_colnames=TRUE,
+             #heatmap.colors.max.scaled = viridis(100),
+             heatmap.colors = viridis(100),
+             main=paste0("BANKSY clustering ", cell_type_anno, " cells", " annotated"),
+             annot.by = c("anno_bank", "Group", "SampleId"),
+             annotation_colors = list(disease = color_vector_disease,
+                                      sample_id = color_vector_sample_id,
+                                      anno_bank = color_vector_anno_bank))
+
+dittoHeatmap(spe[,cur_cells], 
+             genes = unique(genes_use),
+             assay = assay_selected, 
+             cluster_cols = FALSE, 
+             gaps_col = sorted_cumulative_anno_bank,
+             #breaks=mat_breaks,
+             #scale = "none",
+             scaled.to.max = TRUE,
+             #show_colnames=TRUE,
+             heatmap.colors.max.scaled = viridis(100),
+             #heatmap.colors = viridis(100),
+             main=paste0("BANKSY clustering ", cell_type_anno, " cells", " annotated"),
+             annot.by = c("anno_bank", "Group", "SampleId"),
+             annotation_colors = list(disease = color_vector_disease,
+                                      sample_id = color_vector_sample_id,
+                                      anno_bank = color_vector_anno_bank))
+}
+
+dittoHeatmap(spe[,cur_cells], 
+             genes = unique(genes_use),
+             assay = assay_selected,  
+             cluster_cols = FALSE, 
+             gaps_col = sorted_cumulative_clust_bank,
+             breaks=mat_breaks,
+             #scale = "none",
+             #scaled.to.max = TRUE,
+             #show_colnames=TRUE,
+             #heatmap.colors.max.scaled = viridis(100),
+             heatmap.colors = viridis(100),
+             main=paste0("BANKSY clustering ", cell_type_anno, " cells", " not annotated"),
+             annot.by = c(cnames_spe[2], "Group", "SampleId"),
+             annotation_colors = rlang::list2(disease = color_vector_disease,
+                                      sample_id = color_vector_sample_id,
+                                      !!cnames_spe[2] := color_vector_clust_bank))
+
+dittoHeatmap(spe[,cur_cells], 
+             genes = unique(genes_use),
+             assay = assay_selected, 
+             cluster_cols = FALSE, 
+             gaps_col = sorted_cumulative_clust_bank,
+             #breaks=mat_breaks,
+             #scale = "none",
+             scaled.to.max = TRUE,
+             #show_colnames=TRUE,
+             heatmap.colors.max.scaled = viridis(100),
+             #heatmap.colors = viridis(100),
+             main=paste0("BANKSY clustering ", cell_type_anno, " cells", " not annotated"),
+             annot.by = c(cnames_spe[2], "Group", "SampleId"),
+             annotation_colors = rlang::list2(disease = color_vector_disease,
+                                      sample_id = color_vector_sample_id,
+                                      !!cnames_spe[2] := color_vector_clust_bank))
+
+```
+
+
+# Outputs
+
+This analysis generates the following results: <br>
+
+1. It creates spatial graphs for the spe with the BANKSY and non-spatial annotations.
+2. It creates UMAPS for the spe with the BANKSY and non-spatial annotations.
+3. It creates heatmaps with marker genes for the spe with the BANKSY and non-spatial annotations.
+Note: if you renamed the annotations of the BANKSY clusters and set manual_annotation_flag as TRUE, then you will also have a UMAP plot comparing the manually annotated clusters to the original BANKSY annotation, and also extra heatmaps showing the manual annotation (besides the original BANKSY names). <br>
+
+# Session information
+
+```{r session}
+etime <- proc.time() - ptm
+cat('Rendering this document took :', etime[3], ' s \n')
+
+sessioninfo::session_info()
+```
+

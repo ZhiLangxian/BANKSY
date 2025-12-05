@@ -1,0 +1,532 @@
+---
+title: "Label the annotations at different levels"
+author: "Alex Matei"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output: 
+  html_document: 
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    df_print: paged
+    code_folding: hide
+---
+
+# Setup
+
+```{r setup, include=FALSE}
+if (!requireNamespace("here", quietly = TRUE)) {
+  install.packages("here")
+}
+library(here)
+source(here("config.R"))
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, root.dir = here::here())
+```
+
+```{r timestamp}
+ts <- format(Sys.time(), "%Y%m%d%H%M%S")
+ptm <- proc.time()
+
+cat("This document was created with the time stamp",ts)
+```
+
+# User-specified variables for loading the spe - **USER INPUTS REQUIRED** 
+
+```{r user_var_load_spe}
+# Path to the directory containing the input 'spe' files
+data_dir <- here('/Users/langxianzhi/Calcinosis/Resegmentation/output/')  # Specify the data directory
+
+# Name of the input 'spe' file to load
+input_spe_filename <- "banksy_level2_repeat2_mix_reso1.5_.rds"  # Specify the 'spe' file name
+
+# Explanations:
+# - **data_dir**: The directory where your input 'spe' files are located.
+# - **input_spe_filename**: The name of the 'spe' file to load.
+```
+
+# Load the spe
+
+```{r load spe}
+# Load the 'spe' object
+if (grepl("\\.rds$", input_spe_filename)) {
+  spe <- readRDS(file.path(data_dir, input_spe_filename))
+} else if (grepl("\\.RData$", input_spe_filename)) {
+  load(file.path(data_dir, input_spe_filename))
+}
+
+```
+
+# Other user-specified variables - **USER INPUTS REQUIRED** 
+
+```{r user_var_other, include=TRUE}
+
+output_dir <- here('/Users/langxianzhi/Calcinosis/Resegmentation/output/')  # Specify the output directory
+
+n_levels <- 2         # Number of annotation levels currently present
+
+annotate_level <- 2    # Level at which you want to modify annotations
+
+annotation_flag <- FALSE  # Flag to indicate if you already have the annotation in the spe at the level you currently aim to annotate and at the same repeat. 
+
+annotation_suffix <- "bank" # the suffix that your clustering variable ends with (after e.g. lv1.anno_)
+annotation_variable <- paste0("lv",annotate_level,".anno_",annotation_suffix) # Do not modify. Creates the annotation variable from annotate_level and annotation_suffix. The downstream pipeline is optimized for a level organization where the cluster variable has the structure as e.g. lv2.anno_bank (or other suffix). If your labels are different, rename to follow this structure.
+
+if(annotation_flag==FALSE){
+  annotate_bank <- TRUE # Flag to indicate if you want to annotate the original results of the BANKSY clustering or the results of the non-spatial clustering
+}
+
+#Level of annotation and repeat number
+level_anno <- c("2") # Specify the level of annotation for the clusters.
+repeat_anno <- c("2") # Specify the repeat number for the annotation at the current level, if you do the annotation at the same level multiple times
+name_level_repeat <- paste0("BANKSY_params_level_", level_anno, "_repeat_", repeat_anno) # leave unchanged
+
+# Should the spe be subset? Do this only if you want to do subclustering
+subset_flag <- TRUE  # Set to TRUE to subset the spe or FALSE to not subset it
+
+# Variable to subset the spe by, if needed
+if (subset_flag) {
+  subset_variable <- "lv2.anno_bank"  # Specify the column in 'spe' to subset by
+  cat("Choose the cell type variable from:\n")
+  cat(unique(spe[[subset_variable]]), sep = "\n")
+  value_to_exclude <- c("Appendage-associated cells","Immune cells","Keratinocytes","Endothelial cells","Smooth muscle cells","Melanocytes" ,"Undefined","Adipocytes","Schwann cells","Fibroblasts")  # Specify the value to exclude when subsetting the 'spe'
+}
+  
+# Explanations:
+# - **output_dir**: The directory where the modified 'spe' files will be saved.
+# - **n_levels**: The number of annotation levels present in the 'spe' object.
+# - **annotate_level**: The level at which you want to modify annotations.
+# - **annotation_flag**: Flag to indicate if you already have the annotation in the spe at the level you currently aim to annotate. If set to TRUE, then you already have the annotation in the colnames(colData(spe)) at the level you aim to annotate. If set to FALSE, you are aiming to annotate the original results of the BANKSY clustering, which are labelled with cluster numbers.
+# - **annotation_suffix**: # the suffix that your clustering variable ends with (after e.g. lv1.anno_). It is required if you keep a standardized label for cluster annotation variables.
+# - **annotate_bank**: A flag to indicate if you want to annotate the original results of the BANKSY clustering or the results of the non-spatial clustering.
+# - **level_anno**: The level of annotation for the clusters.
+# - **repeat_anno**: The repeat number for the annotation at the current level, if you do the annotation at the same level multiple times.
+# - **subset_flag**: A flag to determine whether to subset the 'spe'.
+# - **subset_variable**: The column name in 'spe' to subset by.
+```
+
+# Check the unique annotations at each level
+
+```{r check_annotations}
+
+if(n_levels>=2){
+  if(!paste0("lv", annotate_level, ".anno_bank") %in% colnames(colData(spe))){
+  spe[[paste0("lv", annotate_level, ".anno_bank")]] <- spe[[paste0("lv", annotate_level-1, ".anno_bank")]]
+  }
+}
+
+print(names(metadata(spe)[[name_level_repeat]][["annotation"]]))   
+      
+if (length(names(metadata(spe)[[name_level_repeat]][["annotation"]])) > 2){
+# # Only run if necessary and not more than one time!!! --> This assumes that a small bug is present when clustering at level 1, which keeps the annotation from level 1 in metadata(spe) (two vectors, one for non-spatial and one for BANKSY) and adds the annotation from level 2 on top. If this is present (more than 2 elements in the annotation list), remove the first 2 (the level 1 annotation).
+
+ for(i in names(metadata(spe)[[name_level_repeat]][["annotation"]])[1:2]){
+ metadata(spe)[[name_level_repeat]][["annotation"]][i] <- NULL # remove the first two elements that should correspond to the level 1 annotation
+ }
+}
+
+print(names(metadata(spe)[[name_level_repeat]][["annotation"]])) 
+
+if(annotation_flag==FALSE) {
+  cnames_spe <- metadata(spe)[[name_level_repeat]]$cnames
+  if (subset_flag) {
+    spe_subset <- spe[, !spe[[subset_variable]] %in% value_to_exclude]
+    match_id_vector <- match(colnames(spe_subset), colnames(spe))
+    if (annotate_bank) {
+      spe[[paste0("lv", annotate_level, ".anno_bank")]][match_id_vector] <- metadata(spe)[[name_level_repeat]][["annotation"]][[2]]
+    } else {
+      spe[[paste0("lv", annotate_level, ".anno")]][match_id_vector] <- metadata(spe)[[name_level_repeat]][["annotation"]][[1]]
+    }
+    rm(spe_subset)
+  } else {
+    if (annotate_bank) {
+      spe[[paste0("lv", annotate_level, ".anno_bank")]] <- metadata(spe)[[name_level_repeat]][["annotation"]][[2]]
+    } else {
+      spe[[paste0("lv", annotate_level, ".anno")]] <- metadata(spe)[[name_level_repeat]][["annotation"]][[1]]
+    }
+  }
+}
+
+# Generate the annotation level column names
+level_names <- paste0("lv", 1:n_levels, ".anno_",annotation_suffix)
+
+# Check unique annotations at each level
+for (lvl in level_names) {
+  cat("## Unique annotations at", lvl, ":\n")
+  print(unique(spe[[lvl]]))
+  cat("\n")
+}
+
+# Ensure column names do not have periods
+# colnames(colData(spe))[colnames(colData(spe)) %in% level_names] <- gsub("\\.", "_", colnames(colData(spe))[colnames(colData(spe)) %in% level_names])
+# level_names <- gsub("\\.", "_", level_names)
+
+# Annotation Mapping Loop with Conditional Execution
+if (n_levels >= 2) {
+  for (i in 1:(n_levels - 1)) {
+    higher_level <- level_names[i]
+    
+    # Skip if higher_level is NA or blank
+    if (is.na(higher_level) || higher_level == "") {
+      next
+    }
+    
+    for (j in (i + 1):n_levels) {
+      lower_level <- level_names[j]
+      
+      # Skip if lower_level is NA or blank
+      if (is.na(lower_level) || lower_level == "") {
+        next
+      }
+      
+      cat("# Annotation Mapping from", higher_level, "to", lower_level, "\n")
+      check_annotations_between_levels_fx(higher_level, lower_level)
+    }
+  }
+} else {
+  cat("### Only one annotation level ('", level_names, "') detected. Skipping multi-level annotation mapping.\n", sep = "")
+  
+  
+  
+  # Optionally, perform single-level analysis here
+  # For example, list all unique annotations in lv1.anno_bank
+  unique_annotations <- unique(spe[[level_names]])
+  cat("### Unique annotations in", level_names, ":\n")
+  print(unique_annotations)
+}
+
+# Transform the annotations to characters
+for (i in level_names){
+  spe[[i]] <- as.character(spe[[i]])
+}
+
+level_to_modify <- level_names[n_levels]
+
+```
+
+# Modify annotations at the selected level - **EXPERIMENTAL, IGNORE**
+
+```{r modify annotations}
+#runApp(here("annotation_modifier_app.R"))
+```
+
+# Define the new annotations - **USER INPUTS REQUIRED**
+
+```{r define_new_annotations}
+
+cat("\nWhat annotations to change?:", unique(spe[[level_to_modify]]), sep = "\n")
+
+# Define multiple replacements as a list of lists, example below
+# replacements <- list(
+#   # Replacement targeting only level1 (no earlier levels)
+#   list(
+#     old_value = "NK cells",
+#     new_value = "NK_new_lv1",
+#     level = level_to_modify,
+#     new_values_lv = NULL  # No earlier levels to update
+#   ),
+#   
+#   # Replacement targeting level2 (update level1)
+#   list(
+#     old_value = "T cells",
+#     new_value = "T_new_lv2",
+#     level = level_to_modify,
+#     new_values_lv = c(
+#       lv1 = "T_new_lv1"  # Update only level1
+#     )
+#   ),
+#   
+#   # Replacement targeting level3 (update level1 and level2)
+#   list(
+#     old_value = "Monocytes",
+#     new_value = "Monocytes_new_lv3",
+#     level = level_to_modify,
+#     new_values_lv = c(
+#       lv1 = "Monocytes_new_lv1",
+#       lv2 = "Monocytes_new_lv2"
+#     )
+#   )
+#   
+#   # Add more replacements as needed
+# )
+
+replacements <- list(
+ list(
+     old_value = "1",
+     new_value = "Fibroblasts",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Fibroblasts"  # Update only level1
+     )
+   ),
+   
+   
+   list(
+     old_value = "2",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+ 
+  list(
+     old_value = "3",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+  list(
+     old_value = "4",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+   list(
+     old_value = "5",
+     new_value = "Fibroblasts",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Fibroblasts"  # Update only level1
+     )
+   ),
+
+    list(
+     old_value = "6",
+     new_value = "Fibroblasts",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Fibroblasts"  # Update only level1
+     )
+   ),
+ 
+   list(
+     old_value = "7",
+     new_value = "Fibroblasts",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Fibroblasts"  # Update only level1
+     )
+   ),
+ 
+list(
+     old_value = "8",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+ 
+ list(
+     old_value = "9",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+
+ list(
+     old_value = "10",
+     new_value = "Fibroblasts",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Fibroblasts"  # Update only level1
+     )
+   ),
+
+ list(
+     old_value = "11",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+ list(
+     old_value = "12",
+     new_value = "Fibroblasts",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Fibroblasts"  # Update only level1
+     )
+   ),
+
+  list(
+     old_value = "13",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+
+list(
+     old_value = "14",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+list(
+     old_value = "15",
+     new_value = "Fibroblasts",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Fibroblasts"  # Update only level1
+     )
+   ),
+
+list(
+     old_value = "16",
+     new_value = "Fibroblasts",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Fibroblasts"  # Update only level1
+     )
+   ),
+
+ list(
+     old_value = "17",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+ list(
+     old_value = "18",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+list(
+     old_value = "19",
+     new_value = "Fibroblasts",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Fibroblasts"  # Update only level1
+     )
+   ),
+
+ list(
+     old_value = "20",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+ list(
+     old_value = "21",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   ),
+
+ list(
+     old_value = "22",
+     new_value = "Immune cells",
+     level = level_to_modify,
+     new_values_lv = c(
+       lv1 = "Immune cells"  # Update only level1
+     )
+   )
+)
+
+
+
+ 
+ 
+
+
+
+# Perform all replacements
+spe <- perform_replacements_fx(spe, replacements, level_names, level_to_modify)
+
+```
+# Check the unique annotations at each level after modification
+
+```{r check_annotations_after}
+for (lvl in level_names) {
+  cat("## Final unique annotations at", lvl, ":\n")
+  print(unique(spe[[lvl]]))
+  cat("\n")
+}
+
+# Annotation Mapping Loop with Conditional Execution
+if (n_levels >= 2) {
+  for (i in 1:(n_levels - 1)) {
+    higher_level <- level_names[i]
+    
+    # Skip if higher_level is NA or blank
+    if (is.na(higher_level) || higher_level == "") {
+      next
+    }
+    
+    for (j in (i + 1):n_levels) {
+      lower_level <- level_names[j]
+      
+      # Skip if lower_level is NA or blank
+      if (is.na(lower_level) || lower_level == "") {
+        next
+      }
+      
+      cat("# Annotation Mapping from", higher_level, "to", lower_level, "\n")
+      check_annotations_between_levels_fx(higher_level, lower_level)
+    }
+  }
+} else {
+  cat("### Only one annotation level ('", level_names, "') detected. Skipping multi-level annotation mapping.\n", sep = "")
+  
+  # Optionally, perform single-level analysis here
+  # For example, list all unique annotations in lv1.anno_bank
+  unique_annotations <- unique(spe[[level_names]])
+  cat("### Unique annotations in", level_names, ":\n")
+  print(unique_annotations)
+}
+```
+# Save the modified spe
+
+```{r save_spe}
+
+output_spe_filename <- paste0(gsub("\\.(RData|rds)$", "", gsub("[^A-Za-z]+.rds$", "_", input_spe_filename), ignore.case = TRUE),ts, ".rds")
+output_spe_filename <- gsub("^[^A-Za-z]+", "", output_spe_filename)
+
+readr::write_rds(spe, file.path(output_dir, output_spe_filename))
+```
+
+
+# Outputs
+
+This analysis generates the following results: <br>
+
+1. It modifies the annotations at the selected level in the spe object. 
+2. It saves the spe with the modified annotations at '`r paste0(output_dir, output_spe_filename, sep="")`'. <br>
+
+# Session information
+
+```{r session}
+etime <- proc.time() - ptm
+cat('Rendering this document took :', etime[3], ' s \n')
+
+sessioninfo::session_info()
+```

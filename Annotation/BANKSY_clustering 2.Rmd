@@ -1,0 +1,484 @@
+---
+title: "Clustering of cISH data by BANKSY"
+author: "Alex Matei"
+date: "`r format(Sys.time(), '%Y-%m-%d')`"
+output: 
+  html_document: 
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    df_print: paged
+    code_folding: hide
+---
+
+# Setup
+```{r setup, include=FALSE}
+if (!requireNamespace("here", quietly = TRUE)) {
+  install.packages("here")
+}
+library(here)
+source(here("config.R"))
+
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, root.dir = here::here())
+```
+
+```{r timestamp and future plan}
+ts <- format(Sys.time(), "%Y%m%d%H%M%S")
+ptm <- proc.time()
+
+cat("This document was created with the time stamp",ts)
+
+plan_future_fx(memory_fraction = 0.9, handler = "txtprogressbar")
+```
+
+# User-specified variables for loading the spe - **USER INPUTS REQUIRED** 
+
+```{r user_var_load_spe}
+# Path to the directory containing the input 'spe' files
+data_dir <- here('/Users/langxianzhi/Calcinosis/output_dataset/')  # Specify the data directory
+
+# Name of the input 'spe' file to load
+input_spe_filename <- "calcinosis_8_sfe_QC_TRUE_dgc250714092435.rds"  # Specify the 'spe' file name
+
+# Explanations:
+# - **data_dir**: The directory where your input 'spe' files are located.
+# - **input_spe_filename**: The name of the 'spe' file to load.
+```
+
+# Load the spe
+
+```{r load spe}
+# Load the 'spe' object
+if (grepl("\\.rds$", input_spe_filename)) {
+  spe <- readRDS(file.path(data_dir, input_spe_filename))
+} else if (grepl("\\.RData$", input_spe_filename)) {
+  load(file.path(data_dir, input_spe_filename))
+}
+
+spe <- exclude_noncoding_genes_fx(spe)
+
+for(i in names(metadata(spe))){
+if (!is.null(metadata(spe)[[i]])) {
+  if ("reducedDims" %in% names(metadata(spe)[[i]])) {
+    metadata(spe)[[i]][["reducedDims"]] <- NULL
+  }
+  if ("assays" %in% names(metadata(spe)[[i]])) {
+    metadata(spe)[[i]][["assays"]] <- NULL
+  }
+}
+}
+
+for (i in reducedDimNames(spe)){
+reducedDim(spe,i) <- NULL
+}
+
+#spe <- spe[,spe$sample_id%in%unique(spe$sample_id)[1:6]] # to test the code with a smaller number of samples
+```
+
+# Other user-specified variables - **USER INPUTS REQUIRED** 
+
+```{r user_var_other, include=TRUE}
+# Path to the directory where the spe will be saved
+output_dir <- here('/Users/langxianzhi/Calcinosis/output_dataset/')  # Specify the output directory
+
+# Name of the ROI variable in 'spe' (usually: "sample_id")
+cat(" Choose the ROI variable from:\n")
+cat(colnames(colData(spe)), sep = "\n")
+roi_variable <- "SampleId"  # Specify the roi variable in 'spe'
+
+# Should normalization and scaling be performed? Do it if you don't have the assay "scalenormcounts", this assay is required for the BANKSY clustering
+cat(
+  "Is the assay 'scalenormcounts' available in the 'spe' object?:", "scalenormcounts" %in% names(assays(spe))
+)
+norm_scale_flag <- TRUE  # Set to TRUE to perform normalization and scaling or FALSE to skip it
+
+# Value for flooring the counts, if needed
+if(norm_scale_flag){
+  floor_value <- 20  # Specify the value to floor the counts
+}
+
+# Should the spe be subset? Do this only if you want to do subclustering
+subset_flag <- FALSE  # Set to TRUE to subset the spe or FALSE to not subset it
+
+# Variable to subset the spe by, if needed
+if (subset_flag) {
+  subset_variable <- "lv1.anno_bank"  # Specify the column in 'spe' to subset by
+  cat("Choose the cell type variable from:\n")
+  cat(unique(spe[[subset_variable]]), sep = "\n")
+  value_to_exclude <- c("Keratinocytes","Melanocytes","Immune cells" ,"Sweat gland", "Undefined","Schwann cells","Adipocytes","Endothelial cells","Smooth muscle cells")  # Specify the value to exclude when subsetting the 'spe'
+}
+
+# Lambda and k_geom values for BANKSY
+lambda <- c(0, 0.2)  # Specify the lambda values for BANKSY
+k_geom <- c(15, 30)  # Specify the k_geom values for BANKSY
+
+# Resolution and method parameters for clustering
+resolution <- 1.5 # Specify the resolution for clustering
+cluster_method <- "leiden"  # Specify the clustering method
+# Any other variables that require manual input can be added here
+
+# Level of annotation and repeat number
+level_anno <- c("1") # Specify the level of annotation for the clusters.
+repeat_anno <- c("1") # Specify the repeat number for the annotation at the current level, if you do the annotation at the same level multiple times
+
+# Cell types that are aimed to annotate
+cell_type_anno <- c("all_level1") # Specify the cell types that are aimed to annotate
+
+# Parameters for the function find_markers_banksy_custom_fx
+matrix_used <- "normcounts"  # Specify the matrix used for this function.
+ident_banksy <- TRUE  # Specify whether to choose the BANKSY clusters or the non-spatial clusters for the marker genes.
+
+# Parameters to filter the marker genes by
+avg_log2FC_threshold <- 0.585  # Specify the average log2 fold change threshold
+p_val_threshold <- 0.05  # Specify the p-value threshold
+
+# Organism and organ of the dataset for the cell type annotation
+organism <- c("human") # Specify the organism
+organ <- c("skin") # Specify the organ
+
+# Explanations:
+# - **output_dir**: The directory where the modified 'spe' files will be saved.
+# - **roi_variable**: The column name in 'spe' that contains roi information.
+# - **norm_scale_flag**: A flag to determine whether to perform normalization and scaling.
+# - **floor_value**: The value to floor the counts by.
+# - **subset_flag**: A flag to determine whether to subset the 'spe'.
+# - **subset_variable**: The column name in 'spe' to subset by.
+# - **value_to_exclude**: The value to exclude when subsetting the 'spe'.
+# - **lambda**: The lambda values for BANKSY. The first value should be 0. The second value should be between 0 and 1. The higher the value, the more the algorithm will focus on the spatial information. A value of 0 will focus on the gene expression information. A value of 0.2 is a good starting point for weighting primarily the gene expression information, but also considering the spatial information.
+# - **k_geom**: The k_geom values for BANKSY. The first value should be the number of k nearest neighbors for calculating the matrix H0, that is the average expression among neighbours. The second value should be the number of k nearest neighbors for calculating the matrix H1, that is the AGF or the gradient of expression among neighbours. The values 15 and 30 are good starting points.
+# - **resolution**: The resolution for clustering. A higher resolution will result in more clusters. A value of 3 is a good starting point for over 20 clusters, e.g. for a first level annotation. A value of 1.5 would generate usually slightly over 10 clusters, e.g. for a second or third level annotation.
+# - **cluster_method**: The clustering method to use. Options are "leiden", "louvain", "kmeans", "mclust".
+# - **level_anno**: The level of annotation for the clusters.
+# - **repeat_anno**: The repeat number for the annotation at the current level.
+# - **cell_type_anno**: The cell types that are aimed to annotate. Examples: "all", "immune", "non-immune", "endothelial", "epithelial", "fibroblast", "neural", "muscle", "stem", "progenitor", "other".
+# - **matrix_used**: The matrix used for the function find_markers_banksy_custom_fx. Choose from "scalenormcounts", "banksy", "scalenormcounts_smooth", "banksy_smooth". Defaults to "scalenormcounts".
+# - **ident_banksy**: A flag to determine whether to choose the BANKSY clusters or the non-spatial clusters for the marker genes.
+# - **avg_log2FC_threshold**: The average log2 fold change threshold for filtering marker genes.
+# - **p_val_threshold**: The p-value threshold for filtering marker genes.
+# - **organism**: The organism for the cell type annotation. The choice will influence the ChatGPT prompt. Options are flexible, but usually "human" or "mouse".
+# - **organ**: The organ for the cell type annotation. The choice will influence the ChatGPT prompt. Options are flexible.
+```
+
+# Perform normalization and scaling
+```{r norm scale}
+if (norm_scale_flag){
+colData_spe_compatible <- check_coldata_compatibility_fx(spe)
+
+seurat <- CreateSeuratObject(counts = assays(spe)[["counts"]], meta.data = as.data.frame(colData_spe_compatible$coldata_fixed))
+
+inspect_floor_result <- inspect_floor_threshold_fx(
+  seurat@assays$RNA$counts,
+  floor_value = floor_value,
+  limit_upper_percentile = TRUE # limit the upper percentile of the total counts shown in plots on the x axis to 95%  (default is FALSE)
+)
+
+cat("The percentile of the floor value is:",print(inspect_floor_result$floor_percentile))
+print(inspect_floor_result$plots)
+
+library(DelayedArray)
+library(future)
+plan("sequential")
+options(future.globals.maxSize = 30 * 1024^3) 
+
+totalcounts <- colSums(seurat@assays$RNA$counts) 
+totalcounts_floor <- sweep(seurat@assays$RNA$counts, 2, pmax(totalcounts, 20), "/")
+seurat@assays$RNA$data <- totalcounts_floor
+all.genes <- rownames(spe)
+seurat <- ScaleData(seurat,features = all.genes)
+
+#spe2 <- SpatialExperiment(assay = list(counts = as.matrix(seurat@assays$RNA$counts), normcounts=as.matrix(seurat@assays$RNA$data),scalenormcounts = as.matrix(seurat@assays$RNA$scale.data)),
+                        # colData = seurat@meta.data,
+                         #sample_id = seurat@meta.data$sample_id,
+                         #spatialCoords = as.matrix(seurat@meta.data[,c("x","y")]) %>% #`colnames<-`(c("Pos_X", "Pos_Y")))
+
+spe2 <- SpatialExperiment(assay = list(counts =seurat@assays$RNA$counts, normcounts=as.matrix(seurat@assays$RNA$data), scalenormcounts = seurat@assays$RNA$scale.data),
+                         colData = seurat@meta.data,
+                         sample_id = seurat@meta.data$sample_id,
+                         spatialCoords = spatialCoords(spe))
+
+
+spe2 <- logNormCounts(spe2)
+
+spe <- spe2
+rm(seurat, spe2)
+cat("The normalization and scaling step was performed", sep = "\n")
+cat("The assays in the spe are:", names(assays(spe)), sep = "\n")
+} else {
+  cat("The normalization and scaling step was skipped", sep = "\n")
+  cat("The assays in the spe are:", names(assays(spe)), sep = "\n")
+}
+```
+
+# Perform BANKSY clustering
+
+```{r clustering BANKSY}
+if (subset_flag) {
+  spe_full <- spe
+  spe <- spe[, !spe[[subset_variable]] %in% value_to_exclude]
+  spe_merged <- spe
+ 
+  cnames_spe <- colnames(colData(spe_merged))
+  cnames_spe <- cnames_spe[grep("^clust_M1", cnames_spe)]
+ 
+  if (length(cnames_spe) > 0) {
+    for (i in c(1:length(cnames_spe))) {
+      spe_merged[[cnames_spe[i]]] <- NULL
+    }
+  }
+ 
+  cnames_spe <- NULL
+ 
+  for (dim_name in reducedDimNames(spe_merged)) {
+    reducedDims(spe_merged)[[dim_name]] <- NULL
+  }
+ 
+} else {
+  spe_full <- spe
+}
+ 
+if (subset_flag == FALSE) {
+  # Compute the BANKSY matrix only on the full dataset!
+ 
+  # Extract unique sample IDs
+  unique_sample_ids <- unique(spe[[roi_variable]])
+ 
+  # Create a list to store subsets
+  spe_subsets <- list()
+ 
+  # Subset the SpatialExperiment object by each unique sample_id
+  for (sample_id in unique_sample_ids) {
+    spe_subsets[[sample_id]] <- spe[, spe[[roi_variable]] == sample_id]
+  }
+ 
+  # Check the subsets
+  future.apply::future_lapply(spe_subsets, function(spe) {
+    invisible(capture.output({
+      dim(spe)
+    }))
+  })
+ 
+  # Apply computeBanksy to each subset
+  with_progress({
+    p <- progressor(along = spe_subsets)
+    banksy_results <- future.apply::future_lapply(spe_subsets, function(spe) {
+      p()  # Update progress
+     
+      Banksy::computeBanksy(
+        spe,
+        assay_name = "scalenormcounts",
+        compute_agf = TRUE,
+        seed = 1000,
+        k_geom = k_geom
+      )
+    })
+  })
+ 
+  # Check the results
+  future.apply::future_lapply(banksy_results, function(spe) {
+    invisible(capture.output({
+      dim(spe)
+    }))
+  })
+ 
+  # Merge the results
+  spe_merged <- do.call(cbind, banksy_results)
+ 
+  # Verify the dimensions of the merged object
+  dim(spe_merged)
+  cat(
+    "Are the dimensions of the original spe identical to those of the merged spe after applying BANKSY for each sample?: ",
+    identical(dim(spe), dim(spe_merged))
+  )
+ 
+  # Extract cell names from both objects
+  merged_cell_names <- colnames(spe_merged)
+  original_cell_names <- colnames(spe)
+ 
+  if (identical(merged_cell_names, original_cell_names)) {
+    cat("The cell names in the original spe and the merged spe are identical")
+  } else {
+    cat(
+      "The cell names in the original spe and the merged spe are not identical. Performing matching."
+    )
+    spe_merged <- spe_merged[, match(original_cell_names, merged_cell_names)]
+  }
+}
+ 
+temp_list1 <- list()
+temp_list1 <- metadata(spe_merged)
+#metadata(spe_merged) <- list()
+
+##
+
+#scmat <- assays(spe_merged)[["scalenormcounts"]]  # extract matrix
+#gene_sd <- apply(scmat, 1, sd)                    # calculate sd
+#valid_genes <- gene_sd > 0                        # keep genes with sd>0
+#spe_merged <- spe_merged[valid_genes, ] 
+ 
+# Run BANKSY PCA and UMAP and clustering
+set.seed(1000)
+message("Start running Banksy PCA...")
+spe_merged <- Banksy::runBanksyPCA(spe_merged,
+                                   use_agf = TRUE,
+                                   assay_name = "scalenormcounts",
+                                   lambda = lambda,
+                                   seed=1000,
+                                   npcs=50)
+message("Finished Banksy PCA.")
+ 
+spe_merged <- Banksy::runBanksyUMAP(spe_merged,
+                                    use_agf = TRUE,
+                                    assay_name = "scalenormcounts",
+                                    lambda = lambda,
+                                    seed=1000)
+ 
+spe_merged <- Banksy::clusterBanksy(spe_merged,
+                                    use_agf = TRUE,
+                                    lambda = lambda,
+                                    seed = 1000,
+                                    algo = cluster_method,
+                                    resolution = resolution)
+ 
+spe <- spe_merged
+ 
+# Keep only one BANKSY parameters list in the metadata(spe) (the function above creates one for each iteration). Add the level of annotation and the repeat number to the name of the list.
+ 
+name_level_repeat <- paste0("BANKSY_params_level_", level_anno, "_repeat_", repeat_anno) # leave unchanged
+ 
+temp_list2 <- list()
+temp_list2[[name_level_repeat]] <- metadata(spe)[["BANKSY_params"]]
+metadata(spe)[["BANKSY_params"]] <- NULL
+metadata(spe) <- c(temp_list1,temp_list2)
+ 
+rm(temp_list1, temp_list2)
+if(subset_flag==FALSE){
+  rm(spe_subsets)
+}
+ 
+# metadata(spe)[[name_level_repeat]]$reducedDims <- reducedDims(spe)
+ 
+metadata(spe)[[name_level_repeat]]$rdnames_spe <- reducedDimNames(spe)
+ 
+cnames_spe <- colnames(colData(spe_merged))
+cnames_spe <- cnames_spe[grep("^clust_M1", cnames_spe)]
+ 
+metadata(spe)[[name_level_repeat]]$cnames_spe <- cnames_spe
+ 
+for(i in cnames_spe){
+  metadata(spe)[[name_level_repeat]][["annotation"]][[i]] <- spe[[i]]
+  names(metadata(spe)[[name_level_repeat]][["annotation"]][[i]]) <- colnames(spe)
+}
+ 
+metadata(spe)[[name_level_repeat]]$cell_type_annotated <- cell_type_anno
+
+rm(spe_merged)
+```
+
+# Find marker genes and create prompt for ChatGPT annotations
+
+```{r chatgpt annot}
+
+rm(banksy_results)
+rdnames_spe <- metadata(spe)[[name_level_repeat]]$rdnames_spe
+cnames_spe <- metadata(spe)[[name_level_repeat]]$cnames_spe
+
+find_markers_custom_result <- find_markers_banksy_custom_fx(
+    spe,
+    matrix_used = matrix_used,
+    ident_banksy = ident_banksy,
+    level_anno = level_anno,
+    repeat_anno = repeat_anno
+)
+
+markers_seurat <- find_markers_custom_result$markers
+
+spe <- find_markers_custom_result$sce
+
+rm(find_markers_custom_result)
+
+metadata(spe)[[name_level_repeat]]$markers_seurat <- markers_seurat
+
+markers_seurat_top10 <- markers_seurat %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > avg_log2FC_threshold & p_val < p_val_threshold) %>%
+    slice_head(n =  10)
+
+metadata(spe)[[name_level_repeat]]$ChatGPT_anno_prompt <- create_cell_types_annotation_fx(markers_seurat_top10, organism, organ)
+
+cat(metadata(spe)[[name_level_repeat]]$ChatGPT_anno_prompt$message)
+```
+
+# Save spe with BANKSY results
+
+```{r save spe}
+
+if (subset_flag==FALSE) { 
+  # If the spe was not subsetted (first level annotation) then check if the order of cells corresponds to the original spe and add the BANKSY results to the original spe. All the spe's following the first run should have the H0 and H1 matrices already in the assays.
+  
+  identical(colnames(spe), colnames(spe_full))
+  
+  assays(spe_full)[["H0"]] <- assays(spe)[["H0"]]
+  assays(spe_full)[["H1"]] <- assays(spe)[["H1"]]
+
+for (i in rdnames_spe)  {
+reducedDims(spe_full)[[i]] <- reducedDims(spe)[[i]]
+}
+
+} else {
+for (i in rdnames_spe) {
+  # Create the NA matrix
+  reducedDims(spe_full)[[i]] <-
+    matrix(
+      rep(NA, dim(reducedDims(spe)[[i]])[2] * ncol(spe_full)),
+      ncol = dim(reducedDims(spe)[[i]])[2]
+    ) %>%
+    `rownames<-`(colnames(spe_full))
+  
+  # Subset assignment
+  reducedDims(spe_full)[[i]][colnames(spe), ] <- reducedDims(spe)[[i]]
+  }
+}
+
+metadata(spe_full)[[name_level_repeat]] <- metadata(spe)[[name_level_repeat]]
+
+# for(assay in names(assays(spe))){
+#   metadata(spe_full)[[name_level_repeat]][["assays"]][[assay]] <- assays(spe)[[assay]]
+# }
+
+if (subset_flag) {
+  metadata(spe_full)[[name_level_repeat]]$code_subset <- paste("spe <- spe[,!spe[[",
+                                                               subset_variable,
+                                                               "]] %in% c[",
+                                                               value_to_exclude,
+                                                               "]")
+} else {
+  metadata(spe_full)[[name_level_repeat]]$code_subset <- "No subsetting was performed"
+}
+
+# Save the spe with BANKSY results ------------------------------------------------
+
+output_spe_filename <- paste0(gsub("\\.(RData|rds)$", "", input_spe_filename, ignore.case = TRUE),"_",ts, ".rds")
+output_spe_filename <- gsub("^[^A-Za-z]+", "", output_spe_filename)
+
+readr::write_rds(spe_full, file.path(output_dir, output_spe_filename))
+```
+
+# Outputs
+
+This analysis generates the following results: <br>
+
+1. It does a normalization and scaling of data, if needed
+2. It calculates a BANKSY matrix, with which it does dimensionality reduction and clustering.
+3. The cell type aimed to annotate was: `r cell_type_anno`. It finds the marker genes for `r if(ident_banksy) {cat("BANKSY clusters")} else {cat("non-spatial clusters")}` and creates a prompt for ChatGPT annotations.
+4. It saves information about the clustering, as well as the markers and ChatGPT annotations of the clusters in the metadata of the spe: `r names(metadata(spe_full)[[name_level_repeat]])`. In the same place it saves the reduced dimensions and the columns corresponding to the BANKSY and non-spatial clusters.
+5. It saves the spe with the newly created clusters at '`r paste0(output_dir, output_spe_filename, sep="")`'. <br>
+
+# Session information
+
+```{r session}
+etime <- proc.time() - ptm
+cat('Rendering this document took :', etime[3], ' s \n')
+
+sessioninfo::session_info()
+```
+
